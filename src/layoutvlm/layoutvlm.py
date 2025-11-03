@@ -44,14 +44,22 @@ class LayoutVLM:
 
     def __init__(self, save_dir, gpt_4o_model_name="gpt-4o", asset_source="objaverse", mode="finetuned", visual_mark_mode="new_coord", 
                  ft_original_model_id=None, ft_model_checkpoint=None, convert_z_rot_degree_to_rpy_radians=True, max_place_remaining_retry=2,
-                 numerical_value_only=False):
+                 numerical_value_only=False, openai_api_key=None, openai_base_url=None):
         # initialize llm
         self.mode = mode
         self.asset_source = asset_source
         self.save_dir = save_dir
-        self.llm_slow = ChatOpenAI(model_name=gpt_4o_model_name, max_tokens=2048)
-        self.llm_slow_mini = ChatOpenAI(model_name="gpt-4o-mini", max_tokens=2048)
-        self.llm_slow_grouping = ChatOpenAI(model_name="gpt-4o", max_tokens=2048)
+        
+        # Prepare ChatOpenAI kwargs
+        llm_kwargs = {"max_tokens": 2048}
+        if openai_api_key:
+            llm_kwargs["api_key"] = openai_api_key
+        if openai_base_url:
+            llm_kwargs["base_url"] = openai_base_url
+        
+        self.llm_slow = ChatOpenAI(model_name=gpt_4o_model_name, **llm_kwargs)
+        self.llm_slow_mini = ChatOpenAI(model_name="gpt-4o-mini", **llm_kwargs)
+        self.llm_slow_grouping = ChatOpenAI(model_name="gpt-4o", **llm_kwargs)
         self.visual_mark_mode = visual_mark_mode
         self.numerical_value_only = numerical_value_only
 
@@ -180,6 +188,11 @@ class LayoutVLM:
             side_scene_image_path = current_scene_image_path_dict["side_rendering_45_3"]
             asset_images = [current_group_asset_img_path_dict[asset_name] for asset_name in current_group_asset_img_path_dict]
             image_paths = [top_down_scene_image_path, side_scene_image_path] + asset_images
+            
+            # Verify all image files exist
+            for img_path in image_paths:
+                if not os.path.exists(img_path):
+                    raise FileNotFoundError(f"Image file not found: {img_path}")
         
 
         messages = [
@@ -211,6 +224,16 @@ class LayoutVLM:
         if matches:
             constraint_program = matches[0]
         else:
+            # Check if response looks like natural language (no valid Python code)
+            if any(phrase in response_text.lower() for phrase in [
+                "i can't access", "i cannot access", "however,", 
+                "it seems", "could you provide", "feel free"
+            ]):
+                raise ValueError(
+                    f"LLM returned natural language instead of code. "
+                    f"This usually means images were not properly received. "
+                    f"Response: {response_text[:200]}..."
+                )
             constraint_program = response_text
 
         ### remove re-initialized variables
@@ -431,8 +454,7 @@ class LayoutVLM:
 
 
         for attempt_idx in range(MAX_ATTEMPTS):
-            # try:
-            if True:
+            try:
                 # clear constraints
                 self.sandbox.execute_code("solver.constraints = []\n")
                 save_path = f"{_save_dir}/llm_output_program_{attempt_idx}.py"
@@ -459,8 +481,11 @@ class LayoutVLM:
                     placed_assets, group_assets, constraint_program, save_dir=_save_dir, only_initialize=only_initialize
                 )
                 break
-            # except Exception as e:
-            #     print("Retrying ...", e)
+            except Exception as e:
+                print(f"Attempt {attempt_idx + 1}/{MAX_ATTEMPTS} failed: {e}")
+                if attempt_idx == MAX_ATTEMPTS - 1:
+                    print(f"All attempts failed. Last error: {e}")
+                    raise
 
         return placed_assets
 

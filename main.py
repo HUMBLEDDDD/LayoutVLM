@@ -13,6 +13,7 @@ def parse_args():
     parser.add_argument("--save_dir", help="Directory to save results", default="./results/test_run")
     parser.add_argument("--model", help="Model to use for layout generation", default="gpt-4")
     parser.add_argument("--openai_api_key", help="OpenAI API key", required=True)
+    parser.add_argument("--openai_base_url", help="OpenAI API base URL (for custom endpoints)", default=None)
     parser.add_argument("--asset_dir", help="Directory to load assets from.", default="./objaverse_processed")
     return parser.parse_args()
 
@@ -108,7 +109,9 @@ def main():
     layout_solver = LayoutVLM(
         mode="one_shot",
         save_dir=args.save_dir,
-        asset_source="objaverse"  # Default to objaverse
+        asset_source="objaverse",  # Default to objaverse
+        openai_api_key=args.openai_api_key,
+        openai_base_url=args.openai_base_url
     )
     
     # Generate layout

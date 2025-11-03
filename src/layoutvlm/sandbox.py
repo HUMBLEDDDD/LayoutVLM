@@ -96,8 +96,23 @@ class SandBoxEnv:
         try:
             exec(self.all_code, _local_vars)
             exec(entire_program, _local_vars)
+        except SyntaxError as e:
+            # Provide more helpful error message for syntax errors
+            error_msg = (
+                f"Syntax error in generated program:\n"
+                f"  Error: {e}\n"
+                f"  Line {e.lineno}: {e.text.strip() if e.text else 'N/A'}\n"
+                f"\nThis usually means the LLM returned invalid Python code.\n"
+                f"Check the saved program file for details."
+            )
+            raise RuntimeError(error_msg) from e
         except Exception as e:
-            assert False, f"Error in the sandbox code: {e}"
+            # Generic error with context
+            error_msg = (
+                f"Error executing generated program: {type(e).__name__}: {e}\n"
+                f"Program preview:\n{entire_program[:500]}..."
+            )
+            raise RuntimeError(error_msg) from e
 
         for var_name, asset in _local_vars.items():
             if type(asset).__name__ == "Assets":
