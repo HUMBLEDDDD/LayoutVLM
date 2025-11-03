@@ -470,11 +470,8 @@ def get_pixel_coordinates(scene, camera, world_coord):
 
 def set_rendering_settings(panorama=False, high_res=False) -> None:
     render = bpy.context.scene.render
-    try:
-        render.engine = 'BLENDER_EEVEE'
-    except TypeError:
-        # Blender 4.x renamed EEVEE to EEVEE_NEXT
-        render.engine = 'CYCLES'  # Fallback to CYCLES
+    render.engine = 'CYCLES'
+
     render.image_settings.file_format = "PNG"
     render.image_settings.color_mode = "RGBA"
 
