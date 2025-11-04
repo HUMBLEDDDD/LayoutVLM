@@ -240,7 +240,21 @@ def render_existing_scene(placed_assets, task, save_dir, add_hdri=True, topdown_
     if adjust_top_down_angle is not None:
         # asset centric rendreing
         floor_material = "Travertine008"
-    add_material(floor_obj, os.path.join("/viscam/projects/SceneAug/ambientcg", floor_material))
+    
+    # 修复硬编码路径问题 - 使用环境变量或跳过材质
+    texture_base_dir = os.environ.get("AMBIENTCG_PATH", "/viscam/projects/SceneAug/ambientcg")
+    if os.path.exists(texture_base_dir):
+        add_material(floor_obj, os.path.join(texture_base_dir, floor_material))
+    else:
+        # 如果材质路径不存在，使用简单灰色材质
+        mat = bpy.data.materials.new(name="SimpleFloorMaterial")
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        bsdf.inputs["Base Color"].default_value = (0.8, 0.8, 0.8, 1.0)  # 浅灰色
+        if floor_obj.data.materials:
+            floor_obj.data.materials[0] = mat
+        else:
+            floor_obj.data.materials.append(mat)
 
     bpy.ops.object.select_all(action='DESELECT')
     floor_obj.select_set(True)

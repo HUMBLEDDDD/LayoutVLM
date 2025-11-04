@@ -71,9 +71,56 @@ class LayoutVLM:
 
 
     @staticmethod
-    def encode_image(image_path):
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
+    def encode_image(image_path, max_size=(1024, 1024), quality=85):
+        """
+        编码图片为base64，自动压缩以适配API限制
+        
+        Args:
+            image_path: 图片路径
+            max_size: 最大尺寸 (width, height)，默认1024x1024
+            quality: JPEG质量 (1-100)，默认85
+        
+        Returns:
+            base64编码的字符串
+        """
+        try:
+            from PIL import Image
+            import io
+            
+            # 打开图片
+            with Image.open(image_path) as img:
+                # 转换RGBA到RGB（如果需要）
+                if img.mode == 'RGBA':
+                    # 创建白色背景
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[3])  # 使用alpha通道作为mask
+                    img = background
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # 计算压缩后的尺寸（保持宽高比）
+                img.thumbnail(max_size, Image.Resampling.LANCZOS)
+                
+                # 保存到内存缓冲区
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=quality, optimize=True)
+                buffer.seek(0)
+                
+                # 编码为base64
+                encoded = base64.b64encode(buffer.read()).decode('utf-8')
+                
+                # 打印压缩信息
+                original_size = os.path.getsize(image_path) / 1024  # KB
+                compressed_size = len(encoded) * 3 / 4 / 1024  # base64解码后的大小
+                print(f"   📸 {os.path.basename(image_path)}: {original_size:.1f}KB → {compressed_size:.1f}KB (压缩{(1-compressed_size/original_size)*100:.1f}%)")
+                
+                return encoded
+                
+        except Exception as e:
+            # 如果压缩失败，回退到原始方法
+            print(f"   ⚠️  图片压缩失败，使用原始文件: {e}")
+            with open(image_path, "rb") as image_file:
+                return base64.b64encode(image_file.read()).decode('utf-8')
 
     def mark_image(self, visual_marks, input_path, output_path, image_size=(512, 512)):
         if self.visual_mark_mode == "grid":
@@ -203,7 +250,17 @@ class LayoutVLM:
         ]
         content = [{"type": "text", "text": final_prompt}]
 
+        # 编码图片并显示压缩信息
+        print(f"\n🖼️  准备 {len(image_paths)} 张图片:")
         encoded_images = [self.encode_image(image_path) for image_path in image_paths]
+        
+        # 计算总大小
+        total_size = sum(len(enc) * 3 / 4 / 1024 for enc in encoded_images)  # KB
+        prompt_size = len(final_prompt) / 1024  # KB
+        print(f"   📊 提示文本: {prompt_size:.1f}KB")
+        print(f"   📊 图片总计: {total_size:.1f}KB")
+        print(f"   📊 预计总大小: {prompt_size + total_size:.1f}KB\n")
+        
         for encoded_image in encoded_images:
             content.append(
                 {
@@ -213,28 +270,62 @@ class LayoutVLM:
             )
         message = HumanMessage(content=content)
         messages.append(message)
-        response = self.llm_slow.invoke(messages)
-        response_text = response.content
+        
+        # 调用API并处理响应
+        try:
+            print(f"🤖 调用 {self.llm_slow.model_name} API...")
+            response = self.llm_slow.invoke(messages)
+            response_text = response.content
+            print(f"✅ API响应成功 ({len(response_text)} 字符)\n")
+        except Exception as api_error:
+            print(f"\n❌ API调用失败: {api_error}")
+            # 检查是否是图片相关错误
+            error_str = str(api_error).lower()
+            if any(keyword in error_str for keyword in ['image', 'size', 'too large', 'limit', 'exceed']):
+                print("💡 可能是图片太大，尝试进一步压缩...")
+                # 重试：使用更小的尺寸和质量
+                encoded_images = [self.encode_image(image_path, max_size=(768, 768), quality=70) for image_path in image_paths]
+                content = [{"type": "text", "text": final_prompt}]
+                for encoded_image in encoded_images:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"},
+                    })
+                message = HumanMessage(content=content)
+                messages[-1] = message
+                print("🤖 重试API调用...")
+                response = self.llm_slow.invoke(messages)
+                response_text = response.content
+                print(f"✅ 重试成功\n")
+            else:
+                raise
+        
         if self.convert_z_rot_degree_to_rpy_radians:
             response_text = replace_z_rot_degree_to_rpy_radians(response_text)
 
         with open(program_save_path, "w") as f:
             f.write(response_text)
+        
         matches = extract_python_program(response_text)
         if matches:
             constraint_program = matches[0]
         else:
             # Check if response looks like natural language (no valid Python code)
-            if any(phrase in response_text.lower() for phrase in [
-                "i can't access", "i cannot access", "however,", 
-                "it seems", "could you provide", "feel free"
-            ]):
+            natural_language_indicators = [
+                "i can't access", "i cannot access", "i can't view", "i cannot view",
+                "however,", "it seems", "could you provide", "could you please",
+                "feel free", "you've uploaded", "i'd be happy",
+                "looks like you", "it appears", "unfortunately"
+            ]
+            if any(phrase in response_text.lower() for phrase in natural_language_indicators):
+                error_preview = response_text[:300].replace('\n', ' ')
                 raise ValueError(
                     f"LLM returned natural language instead of code. "
-                    f"This usually means images were not properly received. "
-                    f"Response: {response_text[:200]}..."
+                    f"This usually means images were not properly received or processed. "
+                    f"Response preview: {error_preview}..."
                 )
-            constraint_program = response_text
+            # 如果没有代码块但也不是明显的自然语言，尝试使用整个响应
+            constraint_program = response_text.strip()
 
         ### remove re-initialized variables
         matches = list(re.finditer(r"\w+ = Assets\(", constraint_program))
@@ -558,6 +649,30 @@ class LayoutVLM:
             print("All assets have already been placed.")
 
         results = self.sandbox.export_layout(use_degree=True)
+        
+        # 生成最终场景的完整渲染（带所有物体）
+        print("\n🎨 生成最终场景渲染...")
+        try:
+            final_render_dir = os.path.join(self.save_dir, "final_render")
+            os.makedirs(final_render_dir, exist_ok=True)
+            
+            output_images, _ = render_existing_scene(
+                results, task, save_dir=final_render_dir,
+                high_res=True, render_top_down=True,
+                apply_3dfront_texture=True, 
+                combine_obj_components=True,
+                fov_multiplier=1.3,
+                # 最终渲染不需要标注
+                add_coordinate_mark=False,
+                annotate_object=False,
+                annotate_wall=False,
+                add_object_bbox=False
+            )
+            reset_blender()
+            print(f"✅ 最终场景渲染完成，保存在: {final_render_dir}")
+        except Exception as e:
+            print(f"⚠️  最终场景渲染失败: {e}")
+        
         ### save into one final gif
         if self.mode not in ["no_constraint", "finetuned"]:
             all_frames = []
