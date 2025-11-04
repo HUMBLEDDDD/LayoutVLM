@@ -475,14 +475,46 @@ def set_rendering_settings(panorama=False, high_res=False) -> None:
     render.image_settings.file_format = "PNG"
     render.image_settings.color_mode = "RGBA"
 
-    # Enable CUDA and select all CUDA GPUs
+    # Enable GPU rendering with proper device detection
     try:
-        bpy.context.preferences.addons['cycles'].preferences.compute_device_type = 'CUDA'
-        for device in bpy.context.preferences.addons['cycles'].preferences.devices:
-            if device.type == 'CUDA':
-                device.use = True
-    except:
-        print('no CUDA devices found')
+        prefs = bpy.context.preferences.addons['cycles'].preferences
+        
+        # Try OPTIX first (faster on newer NVIDIA GPUs), fallback to CUDA
+        gpu_types_to_try = ['OPTIX', 'CUDA', 'OPENCL', 'METAL']
+        device_type_set = False
+        
+        for gpu_type in gpu_types_to_try:
+            try:
+                prefs.compute_device_type = gpu_type
+                prefs.get_devices()  # ← 关键：刷新设备列表
+                
+                # Check if any devices of this type are available
+                gpu_devices = [d for d in prefs.devices if d.type == gpu_type]
+                if gpu_devices:
+                    print(f"✅ 使用 {gpu_type} 渲染")
+                    device_type_set = True
+                    break
+            except:
+                continue
+        
+        if not device_type_set:
+            print("⚠️  未找到GPU设备，使用CPU渲染")
+        else:
+            # Enable all available GPU devices
+            gpu_count = 0
+            for device in prefs.devices:
+                if device.type in ['OPTIX', 'CUDA', 'OPENCL', 'METAL']:
+                    device.use = True
+                    gpu_count += 1
+                    print(f"   🎮 启用GPU {gpu_count}: {device.name}")
+                else:
+                    device.use = False  # Disable CPU when GPU is available
+            
+            if gpu_count == 0:
+                print("⚠️  未启用任何GPU设备，使用CPU渲染")
+    except Exception as e:
+        print(f"⚠️  GPU配置失败: {e}")
+        print("   使用CPU渲染")
 
     render.resolution_x = 512
     render.resolution_y = 512
