@@ -78,25 +78,83 @@ class GradioQwenAdapter:
         
         # 调用 Gradio API
         import time
-        print(f"📡 正在调用 Gradio API (超时: {self.timeout}秒)...")
+        import threading
+        
+        print(f"📡 正在调用 Gradio API...")
         print(f"   图片数量: {len(image_paths)}")
         print(f"   文本长度: {len(text_content)} 字符")
+        print(f"   ⏱️  超时设置: {self.timeout}秒")
+        print(f"   💡 如果超过30秒无响应，可能是Gradio Space排队中...")
         
         start_time = time.time()
-        try:
-            # 使用 submit() + result() 方式支持超时控制
-            job = self.client.submit(
-                input_value=input_value,
-                api_name="/add_message"
-            )
-            
-            # 等待结果，带超时
-            print(f"⏳ 等待响应...")
-            result = job.result(timeout=self.timeout)
-            
+        
+        # 使用线程 + 定时器显示等待进度
+        result_container = []
+        error_container = []
+        
+        def call_api():
+            try:
+                # ✅ 使用 predict() 而不是 submit()，这和 Step 9 测试一致
+                result = self.client.predict(
+                    input_value=input_value,
+                    api_name="/add_message"
+                )
+                result_container.append(result)
+            except Exception as e:
+                error_container.append(e)
+        
+        # 启动API调用线程
+        api_thread = threading.Thread(target=call_api)
+        api_thread.daemon = True
+        api_thread.start()
+        
+        # 等待结果，每10秒显示一次进度
+        print(f"⏳ 等待响应...", end="", flush=True)
+        waited = 0
+        while api_thread.is_alive() and waited < self.timeout:
+            api_thread.join(timeout=10)
+            waited += 10
+            if api_thread.is_alive():
+                print(f" {waited}秒", end="", flush=True)
+        
+        print()  # 换行
+        
+        # 检查结果
+        if error_container:
             elapsed = time.time() - start_time
-            print(f"✅ 收到响应 (耗时: {elapsed:.1f}秒)")
-            
+            e = error_container[0]
+            print(f"❌ API 调用失败 (耗时: {elapsed:.1f}秒)")
+            print(f"   错误类型: {type(e).__name__}")
+            print(f"   错误信息: {str(e)[:200]}")
+            # 清理临时文件
+            for img_path in image_paths:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+            raise RuntimeError(f"Gradio API call failed: {e}")
+        
+        if not result_container:
+            # 超时
+            elapsed = time.time() - start_time
+            print(f"❌ API 调用超时 ({elapsed:.1f}秒)")
+            print(f"⚠️  Hugging Face Space 可能:")
+            print(f"   • 负载过高，排队中")
+            print(f"   • 网络连接问题")
+            print(f"   • 图片处理时间过长")
+            print(f"💡 建议:")
+            print(f"   1. 等待几分钟后重试")
+            print(f"   2. 或切换到阿里云百炼 API（付费但稳定快速）")
+            # 清理临时文件
+            for img_path in image_paths:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+            raise RuntimeError(f"Gradio API timeout after {self.timeout}s")
+        
+        # 成功获取结果
+        result = result_container[0]
+        elapsed = time.time() - start_time
+        print(f"✅ 收到响应 (耗时: {elapsed:.1f}秒)")
+        
+        try:
             # 解析返回结果（新的API格式）
             # result[1] 是一个包含 'value' 键的字典
             # result[1]['value'] 是消息列表
@@ -125,28 +183,13 @@ class GradioQwenAdapter:
             # 返回模拟的 response 对象
             return MockResponse(response_text)
             
-        except TimeoutError:
-            elapsed = time.time() - start_time
-            print(f"❌ API 调用超时 ({elapsed:.1f}秒)")
-            print(f"⚠️  Hugging Face Space 可能负载过高")
-            print(f"💡 建议:")
-            print(f"   1. 稍后重试")
-            print(f"   2. 或切换到阿里云百炼 API（付费但稳定）")
-            # 清理临时文件
-            for img_path in image_paths:
-                if os.path.exists(img_path):
-                    os.remove(img_path)
-            raise RuntimeError(f"Gradio API timeout after {self.timeout}s")
         except Exception as e:
-            elapsed = time.time() - start_time
-            print(f"❌ API 调用失败 (耗时: {elapsed:.1f}秒)")
-            print(f"   错误类型: {type(e).__name__}")
-            print(f"   错误信息: {str(e)[:200]}")
+            print(f"❌ 解析响应失败: {e}")
             # 清理临时文件
             for img_path in image_paths:
                 if os.path.exists(img_path):
                     os.remove(img_path)
-            raise RuntimeError(f"Gradio API call failed: {e}")
+            raise RuntimeError(f"Failed to parse Gradio response: {e}")
     
     def _save_base64_image(self, data_uri: str) -> str:
         """
