@@ -109,7 +109,8 @@ def main():
     layout_solver = LayoutVLM(
         mode="one_shot",
         save_dir=args.save_dir,
-        asset_source="objaverse",  # Default to objaverse
+        asset_source="objaverse",
+        model_name=args.model,  # ✅ 支持任何OpenAI兼容的模型（GPT/Qwen等）
         openai_api_key=args.openai_api_key,
         openai_base_url=args.openai_base_url
     )

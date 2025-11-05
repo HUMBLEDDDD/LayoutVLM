@@ -42,13 +42,17 @@ def extract_json(input_text):
 
 class LayoutVLM:
 
-    def __init__(self, save_dir, gpt_4o_model_name="gpt-4o", asset_source="objaverse", mode="finetuned", visual_mark_mode="new_coord", 
+    def __init__(self, save_dir, model_name=None, asset_source="objaverse", mode="finetuned", visual_mark_mode="new_coord", 
                  ft_original_model_id=None, ft_model_checkpoint=None, convert_z_rot_degree_to_rpy_radians=True, max_place_remaining_retry=2,
                  numerical_value_only=False, openai_api_key=None, openai_base_url=None):
         # initialize llm
         self.mode = mode
         self.asset_source = asset_source
         self.save_dir = save_dir
+        
+        # 如果没有指定模型，使用默认值
+        if model_name is None:
+            model_name = "gpt-4o"  # 兼容性默认值，建议通过参数显式指定
         
         # Prepare ChatOpenAI kwargs
         llm_kwargs = {"max_tokens": 2048}
@@ -57,9 +61,10 @@ class LayoutVLM:
         if openai_base_url:
             llm_kwargs["base_url"] = openai_base_url
         
-        self.llm_slow = ChatOpenAI(model_name=gpt_4o_model_name, **llm_kwargs)
-        self.llm_slow_mini = ChatOpenAI(model_name="gpt-4o-mini", **llm_kwargs)
-        self.llm_slow_grouping = ChatOpenAI(model_name="gpt-4o", **llm_kwargs)
+        # 使用同一个模型（支持OpenAI兼容的API，如Qwen）
+        self.llm_slow = ChatOpenAI(model_name=model_name, **llm_kwargs)
+        self.llm_slow_mini = ChatOpenAI(model_name=model_name, **llm_kwargs)
+        self.llm_slow_grouping = ChatOpenAI(model_name=model_name, **llm_kwargs)
         self.visual_mark_mode = visual_mark_mode
         self.numerical_value_only = numerical_value_only
 
