@@ -12,8 +12,9 @@ def parse_args():
     parser.add_argument("--scene_json_file", help="Path to scene JSON file", required=True)
     parser.add_argument("--save_dir", help="Directory to save results", default="./results/test_run")
     parser.add_argument("--model", help="Model to use for layout generation", default="gpt-4")
-    parser.add_argument("--openai_api_key", help="OpenAI API key", required=True)
+    parser.add_argument("--openai_api_key", help="OpenAI API key", required=False)
     parser.add_argument("--openai_base_url", help="OpenAI API base URL (for custom endpoints)", default=None)
+    parser.add_argument("--use_gradio_api", action="store_true", help="Use Gradio API (Qwen3-VL-Demo) instead of OpenAI-compatible API")
     parser.add_argument("--asset_dir", help="Directory to load assets from.", default="./objaverse_processed")
     return parser.parse_args()
 
@@ -112,7 +113,8 @@ def main():
         asset_source="objaverse",
         model_name=args.model,  # ✅ 支持任何OpenAI兼容的模型（GPT/Qwen等）
         openai_api_key=args.openai_api_key,
-        openai_base_url=args.openai_base_url
+        openai_base_url=args.openai_base_url,
+        use_gradio_api=args.use_gradio_api  # ✅ 新增：支持 Gradio API
     )
     
     # Generate layout

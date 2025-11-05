@@ -44,7 +44,7 @@ class LayoutVLM:
 
     def __init__(self, save_dir, model_name=None, asset_source="objaverse", mode="finetuned", visual_mark_mode="new_coord", 
                  ft_original_model_id=None, ft_model_checkpoint=None, convert_z_rot_degree_to_rpy_radians=True, max_place_remaining_retry=2,
-                 numerical_value_only=False, openai_api_key=None, openai_base_url=None):
+                 numerical_value_only=False, openai_api_key=None, openai_base_url=None, use_gradio_api=False):
         # initialize llm
         self.mode = mode
         self.asset_source = asset_source
@@ -54,17 +54,26 @@ class LayoutVLM:
         if model_name is None:
             model_name = "gpt-4o"  # 兼容性默认值，建议通过参数显式指定
         
-        # Prepare ChatOpenAI kwargs
-        llm_kwargs = {"max_tokens": 2048}
-        if openai_api_key:
-            llm_kwargs["api_key"] = openai_api_key
-        if openai_base_url:
-            llm_kwargs["base_url"] = openai_base_url
-        
-        # 使用同一个模型（支持OpenAI兼容的API，如Qwen）
-        self.llm_slow = ChatOpenAI(model_name=model_name, **llm_kwargs)
-        self.llm_slow_mini = ChatOpenAI(model_name=model_name, **llm_kwargs)
-        self.llm_slow_grouping = ChatOpenAI(model_name=model_name, **llm_kwargs)
+        # 选择 API 类型
+        if use_gradio_api:
+            # 使用 Gradio Client API (Qwen3-VL-Demo)
+            from .gradio_adapter import GradioQwenAdapter
+            print(f"🌐 使用 Gradio API: Qwen/Qwen3-VL-Demo")
+            self.llm_slow = GradioQwenAdapter(space_name="Qwen/Qwen3-VL-Demo", max_tokens=2048)
+            self.llm_slow_mini = self.llm_slow  # 使用同一个实例
+            self.llm_slow_grouping = self.llm_slow
+        else:
+            # 使用 OpenAI 兼容 API (原有方式)
+            llm_kwargs = {"max_tokens": 2048}
+            if openai_api_key:
+                llm_kwargs["api_key"] = openai_api_key
+            if openai_base_url:
+                llm_kwargs["base_url"] = openai_base_url
+            
+            # 使用同一个模型（支持OpenAI兼容的API，如Qwen）
+            self.llm_slow = ChatOpenAI(model_name=model_name, **llm_kwargs)
+            self.llm_slow_mini = ChatOpenAI(model_name=model_name, **llm_kwargs)
+            self.llm_slow_grouping = ChatOpenAI(model_name=model_name, **llm_kwargs)
         self.visual_mark_mode = visual_mark_mode
         self.numerical_value_only = numerical_value_only
 
