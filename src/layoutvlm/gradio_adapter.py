@@ -3,7 +3,7 @@ Gradio Client Adapter for Qwen3-VL-Demo
 适配 Hugging Face Space 上的 Qwen3-VL-Demo API
 """
 
-from gradio_client import Client, file
+from gradio_client import Client, handle_file
 import base64
 from typing import List, Dict, Any
 import os
@@ -14,15 +14,20 @@ class GradioQwenAdapter:
     适配器：让 Gradio Client 的调用方式兼容 langchain_openai.ChatOpenAI 的接口
     """
     
-    def __init__(self, space_name: str = "Qwen/Qwen3-VL-Demo", max_tokens: int = 2048):
+    def __init__(self, space_name: str = "Qwen/Qwen3-VL-Demo", max_tokens: int = 2048, timeout: int = 300):
         """
         Args:
             space_name: Hugging Face Space 名称
             max_tokens: 最大token数（目前Gradio API不支持，仅作为兼容参数）
+            timeout: API调用超时时间（秒），默认300秒（5分钟）
         """
+        print(f"🔗 连接到 Hugging Face Space: {space_name}")
+        print(f"⏱️  超时设置: {timeout}秒")
         self.client = Client(space_name)
         self.max_tokens = max_tokens
+        self.timeout = timeout
         self.model_name = "qwen3-vl"  # 用于日志显示
+        print("✅ Gradio Client 初始化完成")
         
     def invoke(self, messages: List[Any]) -> Any:
         """
@@ -67,16 +72,30 @@ class GradioQwenAdapter:
         
         # 构造 Gradio API 调用参数
         input_value = {
-            "files": [file(img_path) for img_path in image_paths] if image_paths else None,
+            "files": [handle_file(img_path) for img_path in image_paths] if image_paths else None,
             "text": text_content
         }
         
         # 调用 Gradio API
+        import time
+        print(f"📡 正在调用 Gradio API (超时: {self.timeout}秒)...")
+        print(f"   图片数量: {len(image_paths)}")
+        print(f"   文本长度: {len(text_content)} 字符")
+        
+        start_time = time.time()
         try:
-            result = self.client.predict(
+            # 使用 submit() + result() 方式支持超时控制
+            job = self.client.submit(
                 input_value=input_value,
                 api_name="/add_message"
             )
+            
+            # 等待结果，带超时
+            print(f"⏳ 等待响应...")
+            result = job.result(timeout=self.timeout)
+            
+            elapsed = time.time() - start_time
+            print(f"✅ 收到响应 (耗时: {elapsed:.1f}秒)")
             
             # 解析返回结果（新的API格式）
             # result[1] 是一个包含 'value' 键的字典
@@ -96,6 +115,8 @@ class GradioQwenAdapter:
             if not response_text:
                 raise ValueError(f"无法从返回结果中提取文本: {last_message}")
             
+            print(f"📝 响应长度: {len(response_text)} 字符")
+            
             # 清理临时文件
             for img_path in image_paths:
                 if os.path.exists(img_path):
@@ -104,7 +125,23 @@ class GradioQwenAdapter:
             # 返回模拟的 response 对象
             return MockResponse(response_text)
             
+        except TimeoutError:
+            elapsed = time.time() - start_time
+            print(f"❌ API 调用超时 ({elapsed:.1f}秒)")
+            print(f"⚠️  Hugging Face Space 可能负载过高")
+            print(f"💡 建议:")
+            print(f"   1. 稍后重试")
+            print(f"   2. 或切换到阿里云百炼 API（付费但稳定）")
+            # 清理临时文件
+            for img_path in image_paths:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+            raise RuntimeError(f"Gradio API timeout after {self.timeout}s")
         except Exception as e:
+            elapsed = time.time() - start_time
+            print(f"❌ API 调用失败 (耗时: {elapsed:.1f}秒)")
+            print(f"   错误类型: {type(e).__name__}")
+            print(f"   错误信息: {str(e)[:200]}")
             # 清理临时文件
             for img_path in image_paths:
                 if os.path.exists(img_path):
